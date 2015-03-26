@@ -1,7 +1,0 @@
-<launch>
-
-<node pkg="tf" type="static_transform_publisher" name="hark_to_rgb_broadcaster" args="0 -0.0140 0 -0.5 0.5 -0.5 0.5 /hark /world 100" />
-
-<node name="rviz" pkg="rviz" type="rviz"/>
-
-</launch>

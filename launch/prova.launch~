@@ -1,9 +1,0 @@
-<launch>
-
-<node pkg="tf" type="static_transform_publisher" name="hark_1_broadcaster" args="0 0 0 0 0 0 1 /base_link /hark_1 100" />
-<node pkg="tf" type="static_transform_publisher" name="hark_2_broadcaster" args="4.782 5.599 -0.018 -0.010 -0.006 0.441 0.897 /map /hark_2 100" />
-<node pkg="tf" type="static_transform_publisher" name="hark_3_broadcaster" args="6.045 5.665 -0.018 -0.010 -0.006 0.441 0.897 /map /hark_3 100" />
-
-<!--node name="rviz" pkg="rviz" type="rviz"/-->
-
-</launch>
