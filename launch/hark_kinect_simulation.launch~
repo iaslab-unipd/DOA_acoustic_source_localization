@@ -1,0 +1,51 @@
+<launch>
+	<!-- Parameters possible to change-->
+	<arg name="is_simulation" value="true" />
+	<arg name="data_simulation_file_path" value="/home/riccardo/workspace/ros/hydro/rosbuild/sound_localization/launch/angles_sim.txt" />
+	<arg name="n_sound_DOA_sensors" value="3" />
+	<arg name="audio_signal_power_threshold" value="35" />
+	<arg name="algorithm_type" value="1" />
+	<arg name="precision_grid" value="0.01" />
+	<arg name="range" value="10" />
+	<arg name="tf_world_name" value="map" />
+	<arg name="tf_solution_name" value="sound_source_estimated_position" />
+	<arg name="rviz_DOA_line_lenght" value="20" />
+
+	<arg name="sensor_3D_pose_topic_1" value="hark_1" />
+	<arg name="DOA_topic_1" value="HarkSource_1" />
+	<arg name="sensor_3D_pose_topic_2" value="hark_2" />
+	<arg name="DOA_topic_2" value="HarkSource_2" />
+	<arg name="sensor_3D_pose_topic_3" value="hark_3" />
+	<arg name="DOA_topic_3" value="HarkSource_3" />
+	<arg name="sensor_3D_pose_topic_4" value="hark_4" />
+	<arg name="DOA_topic_4" value="HarkSource_4" />
+
+	<!-- Launch calibration result-->
+    <include file="$(find sound_localization)/launch/hark_kinect_frames_simulation.launch" />
+	
+	<!-- Openning Rviz for visualization-->
+	<node name="rviz" pkg="rviz" type="rviz"/>
+
+	<!-- Launching sound_localization-->
+	<node pkg="sound_localization" type="sound_localization" name="sound_localization" output="screen">
+		<param name="is_simulation" value="$(arg is_simulation)" />
+		<param name="data_simulation_file_path" value="$(arg data_simulation_file_path)" />
+		<param name="n_sound_DOA_sensors" value="$(arg n_sound_DOA_sensors)" />
+		<param name="audio_signal_power_threshold" value="$(arg audio_signal_power_threshold)" />
+		<param name="algorithm_type" value="$(arg algorithm_type)" />
+		<param name="precision_grid" value="$(arg precision_grid)" />
+		<param name="range" value="$(arg range)" />
+		<param name="tf_world_name" value="$(arg tf_world_name)" />
+		<param name="tf_solution_name" value="$(arg tf_solution_name)" />
+		<param name="rviz_DOA_line_lenght" value="$(arg rviz_DOA_line_lenght)" />
+
+		<param name="sensor_3D_pose_topic_1" value="$(arg sensor_3D_pose_topic_1)" />
+		<param name="DOA_topic_1" value="$(arg DOA_topic_1)" />
+		<param name="sensor_3D_pose_topic_2" value="$(arg sensor_3D_pose_topic_2)" />
+		<param name="DOA_topic_2" value="$(arg DOA_topic_2)" />
+		<param name="sensor_3D_pose_topic_3" value="$(arg sensor_3D_pose_topic_3)" />
+		<param name="DOA_topic_3" value="$(arg DOA_topic_3)" />
+		<param name="sensor_3D_pose_topic_4" value="$(arg sensor_3D_pose_topic_4)" />
+		<param name="DOA_topic_4" value="$(arg DOA_topic_4)" />
+	</node>
+</launch>

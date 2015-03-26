@@ -1,0 +1,468 @@
+#include <ros/ros.h>
+#include <ros/package.h>
+#include <tf/transform_listener.h>
+#include <tf/transform_broadcaster.h>
+#include <visualization_msgs/Marker.h>
+#include "tf_conversions/tf_eigen.h"
+
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
+#include <Eigen/StdVector>
+#include <eigen_conversions/eigen_msg.h>
+
+#include <hark_msgs/HarkSource.h>
+#include <std_msgs/String.h>
+
+#include <string>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <math.h>
+#include <limits>
+
+using namespace Eigen;
+using namespace std;
+
+//TODO find a method for solving the problem of the association of the number of the hw audio. For now it is progressive and it depends by the order of the plug.-in of the kinect. So for now plug in first kinect 1, after kinect 2, etc
+
+double precGrid = 0.01;
+double room_size = 2;
+
+const double LINE_LENGTH = 20;
+
+ros::NodeHandle * node_handler = 0;
+ros::Rate * loop_rate;
+
+vector<vector<hark_msgs::HarkSourceVal> > hark_audio_direction_sources;
+vector<Eigen::Affine3d, Eigen::aligned_allocator<Eigen::Affine3d> > position_3D_sensors;
+
+template<typename T>
+std::string to_string(const T & Value)
+{
+	std::ostringstream oss;
+	oss << Value;
+	return oss.str();
+}
+
+double mod_angle(double angle, double range)
+{
+	while(angle > range)
+		angle = angle - 2*range;
+	while(angle < -range)
+		angle = angle + 2*range;
+	return angle;
+}
+
+
+double get_global_azimuth(Eigen::Affine3d position_3D_sensor, vector<hark_msgs::HarkSourceVal> source_direction){
+	//TODO do not assume that the first direction from hark is the right one (i.e. change [0] and use another structure)
+	double azimuth_estimation = source_direction[0].azimuth / 180.0 * M_PI; //angle
+	double sensor_roll = atan2(position_3D_sensor.rotation().matrix()(2,0), position_3D_sensor.rotation().matrix()(2,1));
+	double sensor_pitch = acos(position_3D_sensor.rotation().matrix()(2,2));
+	
+	//double sensor_yaw = atan2(-position_3D_sensor.rotation().matrix()(0,0));
+	double sensor_yaw = atan2(position_3D_sensor.rotation().matrix()(0,1), position_3D_sensor.rotation().matrix()(0,0));
+	cout << " sensor_yaw: " << sensor_yaw*180/M_PI << " source_direction: " << source_direction[0].azimuth << endl;
+	cout << position_3D_sensor.rotation().matrix() << endl;
+	return mod_angle(M_PI/2 + azimuth_estimation + sensor_yaw, M_PI);// add rotation of the sensor over y axis 
+	//return mod_angle(azimuth_estimation + sensor_yaw, M_PI);// add rotation of the sensor over y axis
+}
+
+#ifndef SIMULATION
+void harkCallback(const hark_msgs::HarkSource::ConstPtr & msg, int i)
+{
+	hark_audio_direction_sources[i] = msg->src;
+	/*ROS_INFO(
+	 "Hark hark_audio_direction_sources from 1: %d", msg->exist_src_num);
+	 for (unsigned j = 0; j < hark_audio_direction_sources[i].size(); j++)
+	 ROS_INFO(
+	 "\t%d hark_audio_direction_sources from 1: %f, %f", i, hark_audio_direction_sources[i][j].azimuth/180.0 * M_PI, hark_audio_direction_sources[i][j].power);*/
+}
+#endif
+
+Eigen::Vector3d locateADC(vector<Eigen::Affine3d, Eigen::aligned_allocator<Eigen::Affine3d> > p3D_sources, vector<vector<hark_msgs::HarkSourceVal> > direction_sources, vector<bool> detected_DOA){
+
+	int n_sources = 0;
+	for(unsigned int i = 0; i < detected_DOA.size(); i++){
+		if(detected_DOA[i])
+			n_sources++;
+	}
+
+	int dim = 2; //TODO set dimension
+	//TODO set weights
+	MatrixXd w = MatrixXd::Ones(n_sources, 1);
+	MatrixXd W = MatrixXd::Identity(n_sources, n_sources);
+	MatrixXd K = MatrixXd::Zero(2, n_sources);
+	for (unsigned int k = 0; k < detected_DOA.size(); k++) {
+		if(detected_DOA[k]){
+			double azimuth_estimation = get_global_azimuth(position_3D_sensors[k], direction_sources[k]);
+			K.col(k) << cos(azimuth_estimation), sin(azimuth_estimation);
+		}
+	}
+	MatrixXd I = MatrixXd::Identity(dim, dim);
+	MatrixXd A = MatrixXd::Zero(dim, n_sources);
+	for (int i = 0; i < n_sources; i++) {
+		A.col(i) = (I - K.col(i) * K.col(i).adjoint()) * p3D_sources[i].translation().head(2);
+	}
+	Eigen::Vector2d solution = (w.sum() * I - K * K.adjoint()).lu().solve(A * w);
+	Eigen::Vector3d sol;
+	sol << solution, 0;
+	return sol;
+}
+
+double evaluate_WLS_angle(double i, double j, vector<Eigen::Affine3d, Eigen::aligned_allocator<Eigen::Affine3d> > position_3D_sensors, vector<vector<hark_msgs::HarkSourceVal> > direction_sources){
+	int n_sources = position_3D_sensors.size();
+	double tmp_val = 0;
+	for (int k = 0; k < n_sources; k++) {
+		double azimuth_estimation = get_global_azimuth(position_3D_sensors[k], direction_sources[k]);
+		double angle_point2sensor = atan2(j - position_3D_sensors[k].translation()(1), i - position_3D_sensors[k].translation()(0));
+		double angle = mod_angle(angle_point2sensor - azimuth_estimation, M_PI);
+		//tmp_val += exp(angle * angle);
+		tmp_val += angle * angle;
+	}
+	return tmp_val;
+}
+
+Eigen::Vector3d locate_min_angle(vector<Eigen::Affine3d, Eigen::aligned_allocator<Eigen::Affine3d> > position_3D_sensors, vector<vector<hark_msgs::HarkSourceVal> > direction_sources, double room_size, double start_x, double start_y, double precGrid){
+	double x_sol = 0, y_sol = 0;
+	double min_val = std::numeric_limits<double>::max();
+	for (double i = start_x - room_size; i <= start_x + room_size; i += precGrid) {
+		for (double j = start_y - room_size; j <= start_y + room_size; j += precGrid) {
+			double tmp_val = evaluate_WLS_angle(i, j, position_3D_sensors, direction_sources);
+			if (tmp_val < min_val) {
+				min_val = tmp_val;
+				x_sol = i;
+				y_sol = j;
+			}
+		}
+	}
+	Eigen::Vector3d sol;
+	sol << x_sol, y_sol, 0;
+	return sol;
+}
+
+void set_max_rec(int n_coordinate, double x_tmp_value, Eigen::Vector3d value_indexes, double *max_value, Eigen::Vector3d *max_value_indexes, int *x_max_index){
+	if(x_tmp_value > *max_value){
+		*max_value = x_tmp_value;
+		*max_value_indexes = value_indexes;
+		*x_max_index = value_indexes[n_coordinate];
+	}
+	if(x_tmp_value == *max_value && value_indexes[n_coordinate] < *x_max_index){
+		*x_max_index = value_indexes[n_coordinate];
+	}
+}
+
+Eigen::Vector3d locate_min_angle_rec(int num_var, int n_max_coordinates, Eigen::Vector3d previous_indexes, vector<Eigen::Affine3d, Eigen::aligned_allocator<Eigen::Affine3d> > sensor_positions, vector<vector<hark_msgs::HarkSourceVal> > direction_sources, double room_size, double start_x, double start_y, double precGrid, double *max_value)
+{
+	Eigen::Vector3d max_value_indexes = previous_indexes;
+	int n_points = (2*room_size+1)/precGrid;
+	int levels = ceil(log2(n_points));
+
+	if(n_max_coordinates == 0){
+		double i = start_x + (- pow(2,levels-1) + previous_indexes[0]) * precGrid;
+		double j = start_y + (- pow(2,levels-1) + previous_indexes[1]) * precGrid;
+		*max_value = - evaluate_WLS_angle(i, j, sensor_positions, direction_sources);
+	}else{
+		//find max with algorithm
+		*max_value = -std::numeric_limits<double>::max();
+
+		int x_tmp_index = pow(2,levels-1);
+		int x_max_index = std::numeric_limits<int>::max();
+
+		int l = (levels-1);
+		while(l >= 0){
+
+			previous_indexes[num_var - n_max_coordinates] = x_tmp_index;
+			//aggiorno valore indice pivot
+			double x_tmp_value;
+			Eigen::Vector3d value_indexes = locate_min_angle_rec(num_var, n_max_coordinates - 1, previous_indexes, sensor_positions, direction_sources, room_size, start_x, start_y, precGrid, &x_tmp_value);
+
+			//aggiorno valore indice back pivot
+			//x_tmp_back_index = x_tmp_index;
+			//aggiorna valore del massimo
+			set_max_rec(num_var - n_max_coordinates, x_tmp_value, value_indexes, max_value, &max_value_indexes, &x_max_index);
+			if(l > 0){
+				//salta subito se è più piccolo (se uguale --^-- allora va sotto e si fa tutta la ricerca)!!
+				if(l < levels -1 && x_tmp_value < *max_value){
+					//disp('più piccolo');
+					if(x_tmp_index < max_value_indexes[num_var - n_max_coordinates]){
+						x_tmp_index = x_tmp_index + pow(2,l-1);
+					}else{
+						x_tmp_index = x_tmp_index - pow(2,l-1);
+					}
+				}else{
+					//aggiorno valore indice back pivot
+					double x_tmp_back_value = x_tmp_value;
+					double x_tmp_back_index = x_tmp_index;
+					while (((x_tmp_index - x_tmp_back_index) < pow(2,l)-1) && (x_tmp_back_value == x_tmp_value)) //x_tmp_back > 1
+					{
+						x_tmp_back_index = x_tmp_back_index-1;
+						previous_indexes[num_var - n_max_coordinates] = x_tmp_back_index;
+						value_indexes = locate_min_angle_rec(num_var, n_max_coordinates - 1, previous_indexes, sensor_positions, direction_sources, room_size, start_x, start_y, precGrid, &x_tmp_back_value);
+					}
+					//aggiorna valore del massimo
+					set_max_rec(num_var - n_max_coordinates, x_tmp_back_value, value_indexes, max_value, &max_value_indexes, &x_max_index);
+
+					//salto
+					if(x_tmp_back_value > x_tmp_value){// è maggiore -> salta indietro
+						x_tmp_index = x_tmp_index - pow(2,l-1);
+						while(x_tmp_index > x_tmp_back_index){
+							l = l - 1;
+							x_tmp_index = x_tmp_index - pow(2,l-1);
+						}
+					}else{// è minore o uguale (dopo essere arrivato fino al livello precedente) -> salta in avanti
+						if(x_tmp_index == pow(2,levels) - 1){//l forward to reach 2^(levels) element
+							x_tmp_index = x_tmp_index+1;
+							previous_indexes[num_var - n_max_coordinates] = x_tmp_index;
+							Eigen::Vector3d value_indexes = locate_min_angle_rec(num_var, n_max_coordinates - 1, previous_indexes, sensor_positions, direction_sources, room_size, start_x, start_y, precGrid, &x_tmp_value);
+							//aggiorna valore del massimo
+							set_max_rec(num_var - n_max_coordinates, x_tmp_value, value_indexes, max_value, &max_value_indexes, &x_max_index);
+						}else{
+							x_tmp_index = x_tmp_index + pow(2,l-1);
+						}
+					}
+				}
+			}
+			//scende di livello
+			l = l - 1;
+		}
+		max_value_indexes[num_var - n_max_coordinates] = x_max_index;
+	}
+	return max_value_indexes;
+}
+
+Eigen::Vector3d locate_min_angle_fast(vector<Eigen::Affine3d, Eigen::aligned_allocator<Eigen::Affine3d> > sensor_positions, vector<vector<hark_msgs::HarkSourceVal> > direction_sources, double room_size, double start_x, double start_y, double precGrid){
+	double max_value;
+	Eigen::Vector3d previous_indexes;
+
+	Eigen::Vector3d solution = locate_min_angle_rec(2, 2, previous_indexes, sensor_positions, direction_sources, room_size, start_x, start_y, precGrid, &max_value);
+
+	int n_points = (2*room_size+1)/precGrid; 
+	int levels = ceil(log2(n_points));
+
+	solution[0] = start_x + (- pow(2,levels-1) + solution[0]) * precGrid;
+	solution[1] = start_y + (- pow(2,levels-1) + solution[1]) * precGrid;
+	solution[2] = 0;
+
+	return solution;
+}
+
+void update_pose(ros::NodeHandle input_nh, int n_sound_direction_publishers){
+	tf::TransformListener listener;
+	for (int i = 0; i < n_sound_direction_publishers; i++) {
+		string tmp_source_position_3D_topic, tmp_source_audio_direction_topic;
+		input_nh.getParam("source_position_3D_topic_" + to_string(i + 1), tmp_source_position_3D_topic);
+		input_nh.getParam("source_audio_direction_topic_" + to_string(i + 1), tmp_source_audio_direction_topic);
+
+		bool found = false;
+		tf::StampedTransform tmp_transform;
+		while (!found) {
+			try {
+				ros::Time now = ros::Time::now();
+				string world = "map";//TODO give in input
+				listener.waitForTransform(world, tmp_source_position_3D_topic, now, ros::Duration(0.5));
+				listener.lookupTransform(world, tmp_source_position_3D_topic, ros::Time(0), tmp_transform);
+				found = true;
+			} catch (tf::TransformException ex) {
+				ROS_ERROR("%s", ex.what());
+			}
+		}
+
+		Eigen::Affine3d tmp_eigen_transform;
+		tf::transformTFToEigen(tmp_transform, tmp_eigen_transform);
+		position_3D_sensors[i] = tmp_eigen_transform;
+	}
+}
+
+int main(int argc, char **argv) {
+	ros::init(argc, argv, "sound_localization");
+	ros::NodeHandle nh;
+	ros::NodeHandle input_nh("~");
+	node_handler = &nh;
+	ros::Rate lr(10);
+	loop_rate = &lr;
+
+	int n_sound_direction_publishers;
+	input_nh.getParam("n_sound_direction_publishers",
+			n_sound_direction_publishers);
+	cout << "n_sound_direction_publishers: " << n_sound_direction_publishers
+			<< endl;
+
+	hark_audio_direction_sources.resize(n_sound_direction_publishers);
+
+	position_3D_sensors.resize(n_sound_direction_publishers);
+	vector<ros::Subscriber> sub(n_sound_direction_publishers);
+
+#ifndef SIMULATION
+	for (int i = 0; i < n_sound_direction_publishers; i++) {
+		sub[i] = nh.subscribe<hark_msgs::HarkSource>(tmp_source_audio_direction_topic, 100, boost::bind(harkCallback, _1, i));
+	}
+#endif
+
+	ros::Publisher marker_pub = nh.advertise<visualization_msgs::Marker>( "visualization_marker", 10);
+
+	while (ros::ok()) {
+		ros::spinOnce();
+
+		//Points visualization
+		visualization_msgs::Marker solution_WLS_points, solution_min_angle_points,
+		line_strip;
+		string world = "map";
+		solution_WLS_points.header.frame_id = solution_min_angle_points.header.frame_id = line_strip.header.frame_id = world;
+		solution_WLS_points.header.stamp = solution_min_angle_points.header.stamp = line_strip.header.stamp = ros::Time::now();
+		solution_WLS_points.ns = line_strip.ns = "points_and_lines";
+		solution_min_angle_points.ns = "solutions";
+		solution_WLS_points.action = solution_min_angle_points.action = line_strip.action = visualization_msgs::Marker::ADD;
+		solution_WLS_points.pose.orientation.w = solution_min_angle_points.pose.orientation.w = line_strip.pose.orientation.w = 1.0;
+
+		solution_WLS_points.id = 0;
+		solution_min_angle_points.id = 0;
+		solution_WLS_points.type = solution_min_angle_points.type = visualization_msgs::Marker::POINTS;
+
+		// POINTS markers use x and y scale for width/height respectively
+		solution_WLS_points.scale.x = solution_min_angle_points.scale.x = 0.05;
+		solution_WLS_points.scale.y = solution_min_angle_points.scale.y = 0.05;
+
+		// Points are green
+		solution_WLS_points.color.g = 1.0f;
+		solution_WLS_points.color.a = 1.0;
+
+		// Solution points are red
+		solution_min_angle_points.color.r = 1.0f;
+		solution_min_angle_points.color.a = 1.0;
+
+		line_strip.id = 1;
+		line_strip.type = visualization_msgs::Marker::LINE_LIST;
+
+		// LINE_STRIP/LINE_LIST markers use only the x component of scale, for the line width
+		line_strip.scale.x = 0.01;
+		line_strip.scale.y = 0.01;
+
+		// Line strip is blue
+		line_strip.color.b = 1.0;
+		line_strip.color.a = 1.0;
+
+		/*#ifdef SIMULATION
+		position_3D_sensors[2].translation()(0) = start_position + sin(move);
+		move = move + 0.1;
+#endif*/
+
+		//updating pose of the DOA sensors
+
+#ifdef SIMULATION
+
+		std::ifstream infile("/home/riccardo/workspace/ros/hydro/rosbuild/sound_localization/launch/angles_sim.txt");//TODO change
+		std::string line;
+		vector<double> simulation_angles;
+		while (std::getline(infile, line))
+		{
+			std::istringstream iss(line);
+			double a;
+			if (!(iss >> a)) { break; } // error
+			simulation_angles.push_back(a);
+			cout << "angle: " << a << endl;
+		}
+		cout << endl;
+
+		hark_audio_direction_sources.clear();
+		for (int i = 0; i < n_sound_direction_publishers; i++) {
+			vector<hark_msgs::HarkSourceVal> vec;
+			hark_msgs::HarkSourceVal tmp_hark;
+			tmp_hark.azimuth = simulation_angles[i];
+			vec.push_back(tmp_hark);
+			hark_audio_direction_sources.push_back(vec);	
+		}
+#endif
+
+		update_pose(input_nh, n_sound_direction_publishers);
+
+		// Plotting lines
+		for (int k = 0; k < n_sound_direction_publishers; k++) {
+			for (unsigned int i = 0; i < hark_audio_direction_sources[k].size(); i++){
+				//double azimuth_estimations_from_sensors = hark_audio_direction_sources[k][i].azimuth / 180.0 * M_PI; //azimuth_estimations_from_sensors
+				//#endif
+				/*double yaw_sensor = - atan2(position_3D_sensors[k].rotation().matrix()(0,2), position_3D_sensors[k].rotation().matrix()(1,2));
+				azimuth_estimations_from_sensors = mod_angle(M_PI/2 + azimuth_estimations_from_sensors + yaw_sensor, M_PI) + M_PI;// add rotation of the sensor over y axis*/
+				double azimuth_estimations_from_sensors = get_global_azimuth(position_3D_sensors[k], hark_audio_direction_sources[k]) + M_PI;
+				Vector3d prt = position_3D_sensors[k].translation();
+				Vector3d p1, p2;
+				p1 << prt[0] - LINE_LENGTH / 2.0 * cos(azimuth_estimations_from_sensors), prt[1] - LINE_LENGTH / 2.0 * sin(azimuth_estimations_from_sensors), 0;
+				p2 << prt;//prt[0] + LINE_LENGTH / 2.0 * cos(azimuth_estimations_from_sensors), prt[1] + LINE_LENGTH / 2.0 * sin(azimuth_estimations_from_sensors), 0;
+
+				//p1 = rotate_front_Z_2_X.inverse() * p1;
+				//p2 = rotate_front_Z_2_X.inverse() * p2;
+
+				geometry_msgs::Point gp1, gp2;
+				tf::pointEigenToMsg(p1, gp1);
+				tf::pointEigenToMsg(p2, gp2);
+
+				line_strip.points.push_back(gp1);
+				line_strip.points.push_back(gp2);
+			}
+		}
+
+		vector<bool> detected_DOA;
+		detected_DOA.resize(n_sound_direction_publishers);
+
+		int noise = 0;
+		for (int i = 0; i < n_sound_direction_publishers; i++) {
+			if (hark_audio_direction_sources[i].size()){
+				noise++;
+				detected_DOA[i] = true;
+			} else {
+				detected_DOA[i] = false;
+			}
+		}
+
+		tf::Transform transform;
+
+		geometry_msgs::Point gp;
+
+		if (noise == 2) {
+			
+
+			Eigen::Vector3d solution_ADC = locateADC(position_3D_sensors, hark_audio_direction_sources, detected_DOA);
+			cout << "solution of intersection " << endl << solution_ADC << endl << endl;
+
+			transform.setOrigin( tf::Vector3(solution_ADC(0), solution_ADC(1), 0.0) );
+
+			tf::pointEigenToMsg(solution, gp);
+			solution_WLS_points.points.push_back(gp);
+			solution_min_angle_points.points.push_back(gp);
+
+		}
+		else if (noise >= 3) {
+
+			/** Solution WLS **/
+			Eigen::Vector3d solution_ADC = locateADC(position_3D_sensors, hark_audio_direction_sources, detected_DOA);
+
+			tf::pointEigenToMsg(solution_ADC, gp);
+			solution_WLS_points.points.push_back(gp);
+
+
+			/** Solution GP Fast **/
+			Eigen::Vector3d solution_GP_Fast = locate_min_angle_fast(position_3D_sensors, hark_audio_direction_sources, room_size, solution_ADC[0], solution_ADC[1], precGrid);
+			tf::pointEigenToMsg(solution_GP_Fast, gp);
+			solution_min_angle_points.points.push_back(gp);
+			transform.setOrigin( tf::Vector3(solution_GP_Fast(0), solution_GP_Fast(1), 0.0) );
+
+			/** Solution GP Slow **/
+			/*Eigen::Vector3d solution_GP = locate_min_angle(position_3D_sensors, hark_audio_direction_sources, room_size, solution_ADC[0], solution_ADC[1], precGrid);
+			tf::pointEigenToMsg(solution_GP, gp);
+			solution_min_angle_points.points.push_back(gp);*/
+
+		}
+
+		tf::Quaternion q;
+		q.setRPY(0, 0, 0);
+		transform.setRotation(q);
+		static tf::TransformBroadcaster br;
+		br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "map", "sound_source_estimated_position"));//TODO insert as input
+
+		marker_pub.publish(solution_WLS_points);
+		marker_pub.publish(solution_min_angle_points);
+		marker_pub.publish(line_strip);
+
+		loop_rate->sleep();
+	}
+}

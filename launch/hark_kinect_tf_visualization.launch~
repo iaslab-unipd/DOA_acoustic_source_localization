@@ -1,0 +1,9 @@
+<launch>
+
+<node pkg="tf" type="static_transform_publisher" name="hark_to_rgb_broadcaster" args="0 0 0 0 0 0 1 /kinect1_rgb /kinect1_rgb 100" />
+
+<node pkg="tf" type="static_transform_publisher" name="hark_to_rgb_broadcaster" args="-0.0140 0 0 -0.5 0.5 -0.5 -0.5 /kinect1_rgb /hark_1 100" />
+
+<node name="rviz" pkg="rviz" type="rviz"/>
+
+</launch>

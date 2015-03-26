@@ -1,0 +1,3 @@
+<launch>
+	<node pkg="sound_localization" type="ros_localization_kinect_2.n" name="hark_1" output="screen"/>
+</launch>

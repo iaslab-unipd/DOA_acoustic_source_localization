@@ -1,0 +1,6 @@
+<launch>
+<node pkg="tf" type="static_transform_publisher" name="kinect1_rgb_broadcaster" args="0 0 0 0 0 0 1 /map /hark_1 100" />
+<node pkg="tf" type="static_transform_publisher" name="kinect2_rgb_broadcaster" args="1 0 0  0 0 0 1 /map /hark_2 100" />
+<node pkg="tf" type="static_transform_publisher" name="kinect3_rgb_broadcaster" args="0 1 0  0 0 0 1 /map /hark_3 100" />
+
+</launch>

@@ -1,0 +1,51 @@
+<launch>
+	<!-- Parameters possible to change-->
+	<arg name="isSimulation" value="false" />
+	<arg name="n_sound_direction_publishers" value="1" />
+	<arg name="max_sound_sources" value="2" />
+	<arg name="POWER_THRESHOLD" value="35" />
+	<arg name="tf_world_name" value="map" />
+	<arg name="tf_solution_name" value="sound_source_estimated_position" />
+
+	<arg name="source_position_3D_topic_1" value="hark_1" />
+	<arg name="source_audio_direction_topic_1" value="HarkSource_1" />
+	<arg name="source_position_3D_topic_2" value="hark_2" />
+	<arg name="source_audio_direction_topic_2" value="HarkSource_2" />
+	<arg name="source_position_3D_topic_3" value="hark_3" />
+	<arg name="source_audio_direction_topic_3" value="HarkSource_3" />
+	<arg name="source_position_3D_topic_4" value="hark_4" />
+	<arg name="source_audio_direction_topic_4" value="HarkSource_4" />
+
+	<!-- Launch calibration result-->
+    <!--include file="$(find sound_localization)/launch/hark_kinect_frames_simulation.launch" /-->
+	
+	<!-- Run hark nodes -->
+	<!-- ATTENTION!!! Set the value of the Parameter name="A_MATRIX" to the absolute path of your kinect_loc.dat in ros_localization_kinect_X.n files 
+	<node pkg="sound_localization" type="ros_localization_kinect_2.n" name="hark_2" output="screen"/>
+	<node pkg="sound_localization" type="ros_localization_kinect_3.n" name="hark_3" output="screen"/>
+    <node pkg="sound_localization" type="ros_localization_kinect_4.n" name="hark_4" output="screen"/>-->
+	<node pkg="sound_localization" type="ros_localization_kinect_2_1_2_sources.n" name="hark_1" output="screen"/>
+
+	<node pkg="tf" type="static_transform_publisher" name="base_link_broadcaster" args="0 0 0 -0.5 0.5 -0.5 0.5 /map /kinect1_rgb 100" />
+	<node pkg="tf" type="static_transform_publisher" name="hark_1_to_kinect_rgb_broadcaster" args="-0.0140 0 0 -0.5 0.5 -0.5 -0.5 /kinect1_rgb /hark_1 100" />
+
+	<!-- Openning Rviz for visualization-->ì
+	<node name="rviz" pkg="rviz" type="rviz"/>
+
+	<!-- Launching sound_localization-->
+	<node pkg="sound_localization" type="sound_localization" name="sound_localization" output="screen">
+		<param name="isSimulation" value="$(arg isSimulation)" />
+		<param name="n_sound_direction_publishers" value="$(arg n_sound_direction_publishers)" />
+		<param name="max_sound_sources" value="$(arg max_sound_sources)" />
+		<param name="tf_world_name" value="$(arg tf_world_name)" />
+		<param name="tf_solution_name" value="$(arg tf_solution_name)" />
+		<param name="source_position_3D_topic_1" value="$(arg source_position_3D_topic_1)" />
+		<param name="source_audio_direction_topic_1" value="$(arg source_audio_direction_topic_1)" />
+		<param name="source_position_3D_topic_2" value="$(arg source_position_3D_topic_2)" />
+		<param name="source_audio_direction_topic_2" value="$(arg source_audio_direction_topic_2)" />
+		<param name="source_position_3D_topic_3" value="$(arg source_position_3D_topic_3)" />
+		<param name="source_audio_direction_topic_3" value="$(arg source_audio_direction_topic_3)" />
+		<param name="source_position_3D_topic_4" value="$(arg source_position_3D_topic_4)" />
+		<param name="source_audio_direction_topic_4" value="$(arg source_audio_direction_topic_4)" />
+	</node>
+</launch>
