@@ -1,8 +1,8 @@
 <launch>
 	<!-- Parameters possible to change-->
 	<arg name="is_simulation" value="true" />
-	<arg name="data_simulation_file_path" value="/home/riccardo/workspace/ros/hydro/rosbuild/DOA_acoustic_source_localization/launch/angles_sim.txt" />
-	<arg name="n_sound_DOA_sensors" value="3" />
+	<arg name="data_simulation_file_path" value="/home/riccardo/workspace/ros/rosbuild/DOA_acoustic_source_localization/launch/angles_sim.txt" />
+	<arg name="n_acoustic_DOA_sensors" value="3" />
 	<arg name="audio_signal_power_threshold" value="35" />
 	<arg name="algorithm_type" value="1" />
 	<arg name="precision_grid" value="0.01" />
@@ -30,7 +30,7 @@
 	<node pkg="DOA_acoustic_source_localization" type="DOA_acoustic_source_localization" name="DOA_acoustic_source_localization" output="screen">
 		<param name="is_simulation" value="$(arg is_simulation)" />
 		<param name="data_simulation_file_path" value="$(arg data_simulation_file_path)" />
-		<param name="n_sound_DOA_sensors" value="$(arg n_sound_DOA_sensors)" />
+		<param name="n_acoustic_DOA_sensors" value="$(arg n_acoustic_DOA_sensors)" />
 		<param name="audio_signal_power_threshold" value="$(arg audio_signal_power_threshold)" />
 		<param name="algorithm_type" value="$(arg algorithm_type)" />
 		<param name="precision_grid" value="$(arg precision_grid)" />
