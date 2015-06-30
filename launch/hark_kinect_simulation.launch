@@ -1,7 +1,7 @@
 <launch>
 	<!-- Parameters possible to change-->
 	<arg name="is_simulation" value="true" />
-	<arg name="data_simulation_file_path" value="/home/riccardo/workspace/ros/rosbuild/DOA_acoustic_source_localization/launch/angles_sim.txt" />
+	<arg name="data_simulation_file_path" value="$(find DOA_acoustic_source_localization)/launch/angles_sim.txt" />
 	<arg name="n_acoustic_DOA_sensors" value="3" />
 	<arg name="audio_signal_power_threshold" value="35" />
 	<arg name="algorithm_type" value="1" />
